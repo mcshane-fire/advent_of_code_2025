@@ -13,8 +13,6 @@ def read_input(filename):
         ret.append([int(p[0]), int(p[1])])
 
     print("Read %d locations" % len(ret))
-    for i in ret:
-        print(i)
     return ret
 
 def find_biggest(pos):
