@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
-import sys, math
+import sys, math, copy
+import linear
 
 # 16451 too low
 # 16515 too high
@@ -315,5 +316,77 @@ def sum_presses(problems):
 
     return total
 
+def direct_solve(problems):
+    total = 0
+    just = None
+    for i in range(0 if just is None else just, len(problems)):
+        p = problems[i]
 
-print(sum_presses(read_input(sys.argv[1])))
+        spec = []
+        for j in range(p['values']):
+            c = [0] * len(p['buttons'])
+            for k in p['rev'][j]:
+                c[k] = 1
+            spec.append({'coef' : c, 'result' : p['power'][j]})
+
+        print(i, p)
+
+        lin = linear.Linear(spec, debug = False if just is None else True)
+        lin.make_diagonal()
+        lin.reduce_rows()
+
+        v = lin.spot_value()
+        while v is not None:
+            v = lin.spot_value()
+
+        print(lin)
+
+        if len(lin.equations) == 0:
+            presses = 0
+            for s in lin.solutions:
+                presses += s[1]
+
+            print("Problem %d in %d presses" % (i, presses))
+            total += 1
+        else:
+            print(lin.min_set)
+            if len(lin.min_set['set']) == 2:
+                values = []
+                b = list(lin.min_set['set'].keys())
+                for j in range(20):
+                    ov = (lin.min_set['result'] - (j * lin.min_set['set'][b[0]])) / lin.min_set['set'][b[1]]
+                    if ov >= 0 and ov <= 20 and round(ov) - ov < 0.00001:
+                        print(j, ov)
+                        spec = []
+                        c = [0] * len(lin.equations[0]['coef'])
+                        c[b[0]] = 1
+                        spec.append({'coef' : c, 'result' : j})
+                        c = [0] * len(lin.equations[0]['coef'])
+                        c[b[1]] = 1
+                        spec.append({'coef' : c, 'result' : ov})
+                        nlin = lin.copy()
+                        nlin.add_equations(spec)
+ 
+                        nlin.make_diagonal()
+                        nlin.reduce_rows()
+                        v = nlin.spot_value()
+                        while v is not None:
+                            v = nlin.spot_value()
+
+                        print(nlin)
+                        if len(nlin.equations) == 0:
+                            presses = 0
+                            for s in lin.solutions:
+                                presses += s[1]
+                            print("Problem %d found speculative solution with %d presses" % (i, presses))
+
+        
+
+        if just is not None:
+            break
+
+    return total
+
+
+#print(sum_presses(read_input(sys.argv[1])))
+print(direct_solve(read_input(sys.argv[1])))
