@@ -37,7 +37,7 @@ def read_input(filename):
                 size = p[0].split("x")
                 num = p[1].strip().split(" ")
 
-                problems.append({'width' : int(size[0]), 'height' : int(size[1]), 'num' : [int(x) for x in num]})
+                problems.append({'id' : len(problems), 'width' : int(size[0]), 'height' : int(size[1]), 'num' : [int(x) for x in num]})
 
 
     shapes['btf'] = []
@@ -109,9 +109,49 @@ def bitcount(x):
         x &= x-1
     return count
 
-def try_place(problem, shapes, board, x, y, commit, debug = False):
+def score_board(problem,  board):
+    # count crossing for each row
+    # not a very good scoring algorithm, doesn't take into account length of gaps, or vertical gaps
+    total = 0
+
+    #print("score_board")
+    for row in board[1:-1]:
+        #print(total, row)
+        prev = None
+        for i in range(problem['width']):
+            next = (row >> (i+1)) & 1
+            if prev is not None:
+                if prev != next:
+                    total += 1 
+            prev = next
+    #print(" - %d changes" % total)
+    return total
+
+def place_shape(board, shape, x, y):
+    board[y] |= shape['bits'][0] << x
+    board[y+1] |= shape['bits'][1] << x
+    board[y+2] |= shape['bits'][2] << x
+
+def remove_shape(board, shape, x, y):
+    board[y] &= ~(shape['bits'][0] << x)
+    board[y+1] &= ~(shape['bits'][1] << x)
+    board[y+2] &= ~(shape['bits'][2] << x)
+
+# quicker but very crude way of finding the best fit, just return the first match
+def try_place2(problem, shapes, board, x, y, commit, prefix, debug = False):
+    grid = (7 & (board[y] >> x)) | ((7 & (board[y+1] >> x))<<3) | ((7 & (board[y+2] >> x))<<6)
+    candidates = shapes['fit'][grid]
+    if candidates is None:
+        return None
+    for c in candidates:
+        if problem['num'][shapes['mask'][c]['number']] > 0:    
+            return {'shape' : c, 'score' : 0, 'x' : x, 'y' : y}
+    return None
+
+# slower method to try and pick the best option by maximising number of boarding tiles
+def try_place(problem, shapes, board, x, y, commit, prefix, debug = False):
     if debug:
-        print("try_place: ", x, y)
+        print("%stry_place: %d %d" % (prefix, x, y))
 
     grid = (7 & (board[y] >> x)) | ((7 & (board[y+1] >> x))<<3) | ((7 & (board[y+2] >> x))<<6)
     candidates = shapes['fit'][grid]
@@ -131,8 +171,14 @@ def try_place(problem, shapes, board, x, y, commit, debug = False):
     for c in candidates:
         if problem['num'][shapes['mask'][c]['number']] > 0:
             count = bitcount(shapes['mask'][c]['mask'] & mask)
-            if best is None or count > best[1]:
-                best = [c, count]
+
+            place_shape(board, shapes['mask'][c], x, y)
+            sb = score_board(problem, board)
+            remove_shape(board, shapes['mask'][c], x, y)
+
+            if best is None or count - sb > best['score']:
+                #print(" - new best for ", c, count, sb)
+                best = {'shape' : c, 'score' : count - sb, 'x' : x, 'y' : y}
 
             # need to discount count when we create spaces that can't be filled
             # could count gaps?
@@ -146,17 +192,51 @@ def try_place(problem, shapes, board, x, y, commit, debug = False):
     if debug:
         print("Best fit is %s" % best)
 
-    if commit:
-        board[y] |= shapes['mask'][best[0]]['bits'][0] << x
-        board[y+1] |= shapes['mask'][best[0]]['bits'][1] << x
-        board[y+2] |= shapes['mask'][best[0]]['bits'][2] << x
-        problem['num'][shapes['mask'][best[0]]['number']] -= 1
-
     return best
 
+def print_board(problem, board, prefix):
+    bfmt = "%s{:0%db}" % (prefix, problem['width']+2)
+    for b in board:
+        print(bfmt.format(b))
+    
+def place_tiles(problem, shapes, board, prefix, debug):
+    if problem['max_steps'] <= 0:
+        return False
+    problem['max_steps'] -= 1
 
-def can_be_completed(shapes, problem, debug = False):
-    if False and debug:
+    options = []
+    for x in range(1, problem['width']-1):
+        for y in range(1, problem['height']-1):
+            res = try_place2(problem, shapes, board, x, y, False, prefix, debug = False)
+            if res is not None:
+                options.append(res)
+
+    options.sort(key = lambda x : x['score'], reverse = True)
+    if len(options) == 0:
+        return False
+
+    for opt in options:
+        place_shape(board, shapes['mask'][opt['shape']], opt['x'], opt['y'])
+        problem['num'][shapes['mask'][opt['shape']]['number']] -= 1
+
+        if debug:
+            print("%sPicked %s" % (prefix, opt))
+            print_board(problem, board, prefix)
+            print("%s%s" % (prefix, problem['num']))
+
+        if sum(problem['num']) == 0:
+            return True
+
+        if place_tiles(problem, shapes, board, "   %s" % prefix, debug) == True:
+            return True
+        
+        remove_shape(board, shapes['mask'][opt['shape']], opt['x'], opt['y'])
+        problem['num'][shapes['mask'][opt['shape']]['number']] += 1
+
+    return False
+
+def try_solve_problem(shapes, problem, debug = False):
+    if debug:
         for s in shapes['list']:
             print(s['number'], s['def'], s['count'])
             for v in range(8):
@@ -181,7 +261,8 @@ def can_be_completed(shapes, problem, debug = False):
     for i in range(len(shapes['list'])):
         total += shapes['list'][i]['count'] * problem['num'][i]
 
-    print("Total to fit: %d Space: %d Fill rate: %g" % (total, problem['width'] * problem['height'], total / (problem['width'] * problem['height'])))
+    print("%d: Total to fit: %d Space: %d Fill rate: %g" % (problem['id'], total, problem['width'] * problem['height'], total / (problem['width'] * problem['height'])))
+    problem['max_steps'] = 1000
 
     if total > problem['width'] * problem['height']:
         return False
@@ -192,41 +273,17 @@ def can_be_completed(shapes, problem, debug = False):
         board.append(((((1<<(problem['width']+1))-1) ^ ((1<<problem['width'])-1))<<1) | 1)
     board.append((1<<(problem['width']+2))-1)
 
-    bfmt = "{:0%db}" % (problem['width']+2)
-
     if debug:
-        for b in board:
-            print(bfmt.format(b))
+        print_board(problem, board, "")
 
-    while sum(problem['num']) > 0:
-        best = None
-        for x in range(1, problem['width']-1):
-            for y in range(1, problem['height']-1):
-                res = try_place(problem, shapes, board, x, y, False, debug = debug)
-                if res is not None:
-                    if best is None or res[1] > best[1]:
-                        best = res
-                        best.append(x)
-                        best.append(y)
-
-        if best is not None:
-            try_place(problem, shapes, board, best[2], best[3], True, debug = debug)
-            if debug:
-                print("Picked ", best)
-                for b in board:
-                    print(bfmt.format(b))
-                print(problem['num'])
-        else:
-            break
-
-    if debug:
-        for b in board:
-            print(bfmt.format(b))
-        print(problem['num'])
+    place_tiles(problem, shapes, board, "", debug)
 
     if sum(problem['num']) == 0:
+        print("Found solution, %d steps remaining" % problem['max_steps'])
+        print_board(problem, board, "")
         return True
 
+    print("No solution found")
     return False
 
 def count_solutions(p, num = None):
@@ -234,9 +291,9 @@ def count_solutions(p, num = None):
 
     if num is None:
         for problem in p['problems']:
-            count += can_be_completed(p['shapes'], problem)
+            count += try_solve_problem(p['shapes'], problem)
     else:
-        count += can_be_completed(p['shapes'], p['problems'][num], debug = True)
+        count += try_solve_problem(p['shapes'], p['problems'][num], debug = True)
 
     return count
 
